@@ -3,43 +3,43 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Vertical Cosmic Barrage</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>Cosmic Barrage Shooter</title>
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <div id="gameRoot">
-    <div id="stageFrame">
-      <canvas id="gameCanvas" aria-label="game canvas"></canvas>
+  <div id="app">
+    <div id="gameWrap">
+      <canvas id="gameCanvas" aria-label="シューティングゲーム"></canvas>
 
+      <!-- HUD -->
       <div id="hud">
-        <div class="hudTop">
+        <div class="hudRow">
           <div class="hudBlock">
             <div class="hudLabel">HP</div>
-            <div class="barWrap">
-              <div id="hpBar" class="bar"></div>
+            <div class="barOuter" aria-label="HPゲージ">
+              <div id="hpBar" class="barInner"></div>
             </div>
-            <div id="hpText" class="hudSmall"></div>
+            <div id="hpText" class="hudValue">0/0</div>
           </div>
 
-          <div class="hudBlock hudNumbers">
-            <div class="row">
+          <div class="hudBlock right">
+            <div class="hudMini">
               <span class="hudLabel">SCORE</span>
               <span id="scoreText" class="hudValue">0</span>
             </div>
-            <div class="row">
+            <div class="hudMini">
               <span class="hudLabel">POWER</span>
               <span id="powerText" class="hudValue">1</span>
             </div>
-            <div class="row">
+            <div class="hudMini">
               <span class="hudLabel">SUPER</span>
               <span id="superText" class="hudValue">3</span>
-              <span class="hudSmall">(P)</span>
             </div>
-            <div class="row">
+            <div class="hudMini">
               <span class="hudLabel">CRASH</span>
               <span id="clashText" class="hudValue">0</span>
             </div>
-            <div class="row">
+            <div class="hudMini">
               <span class="hudLabel">RAGE</span>
               <span id="rageText" class="hudValue">-</span>
             </div>
@@ -47,44 +47,69 @@
         </div>
 
         <div id="bossHud" class="bossHud hidden">
-          <div class="bossTitle">BOSS</div>
-          <div class="barWrap bossWrap">
-            <div id="bossBar" class="bar bossBar"></div>
+          <div class="bossTop">
+            <span class="bossLabel">BOSS</span>
+            <span id="bossText" class="bossValue">Lv.1 0/0</span>
           </div>
-          <div id="bossText" class="hudSmall"></div>
-        </div>
-
-        <div class="hint">
-          移動: W/A/S/D または ↑/←/↓/→ またはスワイプ(ドラッグ)　|　スーパーショット: P または画面ボタン
+          <div class="barOuter bossOuter">
+            <div id="bossBar" class="barInner bossInner"></div>
+          </div>
         </div>
       </div>
 
-      <button id="superBtn" class="superBtn" aria-label="Super Shot">SUPER<br><span>SHOT</span></button>
+      <!-- Mobile controls -->
+      <div id="mobileControls" class="mobileControls hidden" aria-label="モバイル操作">
+        <div id="dpad" class="dpad" aria-label="8方向キー">
+          <button class="dpadBtn" data-dir="-1,-1" aria-label="左上">↖</button>
+          <button class="dpadBtn" data-dir="0,-1" aria-label="上">↑</button>
+          <button class="dpadBtn" data-dir="1,-1" aria-label="右上">↗</button>
 
+          <button class="dpadBtn" data-dir="-1,0" aria-label="左">←</button>
+          <div class="dpadCenter" aria-hidden="true"></div>
+          <button class="dpadBtn" data-dir="1,0" aria-label="右">→</button>
+
+          <button class="dpadBtn" data-dir="-1,1" aria-label="左下">↙</button>
+          <button class="dpadBtn" data-dir="0,1" aria-label="下">↓</button>
+          <button class="dpadBtn" data-dir="1,1" aria-label="右下">↘</button>
+        </div>
+
+        <button id="superBtn" class="superBtn" aria-label="スーパーショット">SUPER SHOT</button>
+      </div>
+
+      <!-- START overlay -->
       <div id="startOverlay" class="overlay">
-        <div class="title">COSMIC BARRAGE</div>
-        <button id="startBtn" class="bigBtn">START</button>
-        <div class="sub">縦長スマホ想定 / スワイプ(ドラッグ)操作対応 / SUPERボタンあり</div>
+        <div class="panel">
+          <div class="title">COSMIC BARRAGE</div>
+          <div class="sub">WASD / 矢印キー（PC）・8方向キー（スマホ）</div>
+          <div class="sub">P または SUPER SHOT で全画面爆発（ボス無効）</div>
+          <button id="startBtn" class="primary">START</button>
+        </div>
       </div>
 
+      <!-- CONTINUE overlay -->
       <div id="continueOverlay" class="overlay hidden">
-        <div class="title">GAME OVER</div>
-        <div class="sub">CONTINUE?</div>
-        <button id="continueBtn" class="bigBtn">CONTINUE?</button>
-        <div id="countdown" class="countdown">10</div>
-        <div class="sub2">10秒以内に押すと再開（HP全回復 / SCORE=0 / POWER・SUPERは引継ぎ）</div>
+        <div class="panel">
+          <div class="title danger">GAME OVER</div>
+          <div class="sub">CONTINUE ?</div>
+          <div class="count">
+            <span id="countdown">10</span> s
+          </div>
+          <button id="continueBtn" class="primary">CONTINUE</button>
+        </div>
       </div>
 
+      <!-- FINAL overlay -->
       <div id="finalOverlay" class="overlay hidden">
-        <div class="title">GAME OVER</div>
-        <div class="sub">RESULT</div>
-        <div id="finalScore" class="result">SCORE: 0</div>
-        <div id="finalRank" class="result">RANK: -</div>
-        <button id="restartBtn" class="bigBtn">RESTART</button>
+        <div class="panel">
+          <div class="title danger">GAME OVER</div>
+          <div id="finalScore" class="sub">SCORE: 0</div>
+          <div id="finalRank" class="sub">RANK: -</div>
+          <button id="restartBtn" class="primary">BACK TO START</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <script src="game.js"></script>
+  <script src="./game.js"></script>
 </body>
 </html>

@@ -33,6 +33,11 @@
   const bossBar = document.getElementById("bossBar");
   const bossText = document.getElementById("bossText");
 
+  // Mobile D-Pad
+  const mobileControls = document.getElementById("mobileControls");
+  const dpad = document.getElementById("dpad");
+  const dpadButtons = Array.from(document.querySelectorAll(".dpadBtn"));
+
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const rand = (a, b) => a + Math.random() * (b - a);
   const dist2 = (ax, ay, bx, by) => {
@@ -42,6 +47,20 @@
 
   const W = BASE_W;
   const H = BASE_H;
+
+  // === Detect mobile/touch ===
+  const isTouchDevice = (() => {
+    const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    const ua = navigator.userAgent || "";
+    const uaMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+    return coarse || uaMobile || ("ontouchstart" in window);
+  })();
+
+  if (isTouchDevice) {
+    mobileControls.classList.remove("hidden");
+  } else {
+    mobileControls.classList.add("hidden");
+  }
 
   // ===== Input (keyboard) =====
   const keys = new Set();
@@ -54,47 +73,52 @@
   }, { passive: false });
   window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
-  // ===== Drag-follow (swipe) =====
-  let drag = { active: false, id: null, tx: 0, ty: 0 };
+  // ===== Mobile D-Pad state (8-direction) =====
+  const activePads = new Map(); // pointerId -> {x,y}
+  let dpadVec = { x: 0, y: 0 };
 
-  function cssToGamePoint(clientX, clientY) {
-    const rect = canvas.getBoundingClientRect();
-    const xCss = clientX - rect.left;
-    const yCss = clientY - rect.top;
-    const gx = (xCss / rect.width) * W;
-    const gy = (yCss / rect.height) * H;
-    return { x: gx, y: gy };
+  function recomputeDpadVec() {
+    let sx = 0, sy = 0;
+    for (const v of activePads.values()) { sx += v.x; sy += v.y; }
+    sx = clamp(sx, -1, 1);
+    sy = clamp(sy, -1, 1);
+
+    // Normalize diagonal to avoid faster movement
+    if (sx !== 0 && sy !== 0) {
+      const inv = 1 / Math.sqrt(2);
+      sx *= inv; sy *= inv;
+    }
+    dpadVec.x = sx;
+    dpadVec.y = sy;
   }
 
-  function canControl() {
-    return running && !paused && !gameOver && player && player.alive;
+  function parseDir(btn) {
+    const s = btn.getAttribute("data-dir") || "0,0";
+    const [x, y] = s.split(",").map(Number);
+    return { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
   }
 
-  canvas.addEventListener("pointerdown", (e) => {
-    if (!canControl()) return;
-    drag.active = true;
-    drag.id = e.pointerId;
-    const p = cssToGamePoint(e.clientX, e.clientY);
-    drag.tx = p.x;
-    drag.ty = p.y;
-    if (audio) audio.ac.resume().catch(() => {});
-  }, { passive: true });
+  // Hold-to-move
+  for (const btn of dpadButtons) {
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (audio) audio.ac.resume().catch(() => {});
+      btn.setPointerCapture(e.pointerId);
+      btn.classList.add("pressed");
+      activePads.set(e.pointerId, parseDir(btn));
+      recomputeDpadVec();
+    }, { passive: false });
 
-  canvas.addEventListener("pointermove", (e) => {
-    if (!drag.active || drag.id !== e.pointerId) return;
-    if (!canControl()) return;
-    const p = cssToGamePoint(e.clientX, e.clientY);
-    drag.tx = p.x;
-    drag.ty = p.y;
-  }, { passive: true });
+    const end = (e) => {
+      if (activePads.has(e.pointerId)) activePads.delete(e.pointerId);
+      btn.classList.remove("pressed");
+      recomputeDpadVec();
+    };
 
-  function endDrag(e) {
-    if (!drag.active || drag.id !== e.pointerId) return;
-    drag.active = false;
-    drag.id = null;
+    btn.addEventListener("pointerup", (e) => { e.preventDefault(); end(e); }, { passive: false });
+    btn.addEventListener("pointercancel", (e) => { e.preventDefault(); end(e); }, { passive: false });
+    btn.addEventListener("pointerleave", (e) => { if (e.pressure === 0) end(e); }, { passive: true });
   }
-  canvas.addEventListener("pointerup", endDrag, { passive: true });
-  canvas.addEventListener("pointercancel", endDrag, { passive: true });
 
   // ===== Responsive canvas scaling =====
   let dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
@@ -288,7 +312,6 @@
   let shakeAmp = 0;
 
   let kill100 = 0, kill300 = 0, kill500 = 0;
-
   let crashKills = 0;
 
   let nextHealAt100 = 10;
@@ -315,10 +338,8 @@
   let enemyRageCount = 1;
 
   let spiralAngle = 0;
-
   let beam = null;
 
-  const PLAYER_MAX_HP = 120;
   const PLAYER_HIT_R = 14;
   const BOSS_BASE_HP = 300;
 
@@ -424,7 +445,6 @@
           spawnBurst(e.x, e.y, 34, enemyColorGlow(e.type), 1.2);
           spawnRing(e.x, e.y, "rgba(223,246,255,.25)", 210);
           score += e.pts;
-
           crashKills += 1;
 
           if (e.type === 100) kill100++;
@@ -644,8 +664,7 @@
     if (power < 100) return null;
     if (power100ReachedAt == null) return 20;
     const elapsed = (performance.now() - power100ReachedAt) / 1000;
-    const left = Math.max(0, 20 - elapsed);
-    return left;
+    return Math.max(0, 20 - elapsed);
   }
 
   // ===== Power specs =====
@@ -746,15 +765,8 @@
     fireSuperShot();
   }
 
-  superBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    triggerSuperFromUI();
-  }, { passive: false });
-
-  superBtn.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    triggerSuperFromUI();
-  }, { passive: false });
+  superBtn.addEventListener("click", (e) => { e.preventDefault(); triggerSuperFromUI(); }, { passive: false });
+  superBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); triggerSuperFromUI(); }, { passive: false });
 
   // ===== Bullet clash =====
   function bulletClashCheck() {
@@ -845,6 +857,9 @@
     enemyRageCount = 1;
 
     spiralAngle = 0;
+
+    activePads.clear();
+    recomputeDpadVec();
 
     respawnPlayerFull();
 
@@ -983,6 +998,9 @@
 
       crashKills = 0;
     }
+
+    activePads.clear();
+    recomputeDpadVec();
 
     gameOver = false;
     paused = false;
@@ -1208,22 +1226,21 @@
     enemySpawnInterval = clamp(0.62 - scoreFactor * 0.22 - postBossDifficulty * 0.04, 0.20, 0.62);
     const intervalMult = (enemyRage === 10 ? 0.65 : 1.0);
 
-    const ax =
+    // Keyboard movement
+    const kx =
       (keys.has("a") || keys.has("arrowleft") ? -1 : 0) +
       (keys.has("d") || keys.has("arrowright") ?  1 : 0);
 
-    const ay =
+    const ky =
       (keys.has("w") || keys.has("arrowup") ? -1 : 0) +
       (keys.has("s") || keys.has("arrowdown") ?  1 : 0);
 
+    // Mobile D-pad movement (スマホ時はこれがメイン。スワイプ/ドラッグ移動は無効化)
+    const ax = isTouchDevice ? dpadVec.x : kx;
+    const ay = isTouchDevice ? dpadVec.y : ky;
+
     player.x += ax * 380 * dt;
     player.y += ay * 380 * dt;
-
-    if (drag.active) {
-      const follow = clamp(18 * dt, 0, 1);
-      player.x += (drag.tx - player.x) * follow;
-      player.y += (drag.ty - player.y) * follow;
-    }
 
     player.x = clamp(player.x, 34, W - 34);
     player.y = clamp(player.y, 90, H - 50);
@@ -1400,10 +1417,7 @@
       const rect = { x0, x1, y0, y1 };
 
       beam.humAcc += dt;
-      if (beam.humAcc >= 0.12) {
-        beam.humAcc = 0;
-        audio.sfx.laserHum();
-      }
+      if (beam.humAcc >= 0.12) { beam.humAcc = 0; audio.sfx.laserHum(); }
 
       beamClashCheck(rect);
 
@@ -1843,11 +1857,9 @@
     return drawDevil(e);
   }
 
-  // ★ 修正点：薄い円(オーラ)描画を削除
+  // UFO（薄い円なし）
   function drawUFO(e){
     ctx.save(); ctx.translate(e.x,e.y);
-    ctx.globalAlpha=1;
-
     ctx.fillStyle="rgba(223,246,255,.92)";
     ctx.beginPath(); ctx.ellipse(0,6,30,12,0,0,Math.PI*2); ctx.fill();
 
@@ -1859,10 +1871,9 @@
     ctx.restore();
   }
 
-  // ★ 修正点：薄い円(オーラ)描画を削除
+  // Alien（薄い円なし）
   function drawAlien(e){
     ctx.save(); ctx.translate(e.x,e.y);
-    ctx.globalAlpha=1;
 
     ctx.fillStyle="rgba(52,255,179,.88)";
     ctx.beginPath(); ctx.ellipse(0,0,18,24,0,0,Math.PI*2); ctx.fill();
@@ -2083,13 +2094,6 @@
       ctx.lineTo(-10, 4);
       ctx.closePath();
       ctx.fill();
-
-      ctx.globalAlpha = 0.9;
-      ctx.strokeStyle = "rgba(255,209,102,.85)";
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(-30, -6); ctx.lineTo(-22, -6); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(22, 6); ctx.lineTo(30, 6); ctx.stroke();
-      ctx.globalAlpha = 1;
     } else {
       ctx.globalAlpha = 0.98;
       ctx.fillStyle = "rgba(124,243,255,.98)";
@@ -2184,6 +2188,7 @@
   resizeCanvas();
   resetCoreState({ keepAudio: true });
 
+  // スマホでの音開始を確実にする
   window.addEventListener("pointerdown", () => {
     if (!audio) return;
     audio.ac.resume().catch(() => {});
