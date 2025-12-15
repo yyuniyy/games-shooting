@@ -1,15 +1,12 @@
 (() => {
   "use strict";
 
-  // ===== Base (portrait) resolution =====
   const BASE_W = 540;
   const BASE_H = 960;
 
-  // ===== Canvas =====
   const canvas = document.getElementById("gameCanvas");
   const ctx = canvas.getContext("2d");
 
-  // ===== UI =====
   const startOverlay = document.getElementById("startOverlay");
   const startBtn = document.getElementById("startBtn");
 
@@ -22,19 +19,20 @@
   const finalScoreEl = document.getElementById("finalScore");
   const finalRankEl = document.getElementById("finalRank");
 
+  const superBtn = document.getElementById("superBtn");
+
   const hpBar = document.getElementById("hpBar");
   const hpText = document.getElementById("hpText");
   const scoreText = document.getElementById("scoreText");
   const powerText = document.getElementById("powerText");
   const superText = document.getElementById("superText");
-  const clashText = document.getElementById("clashText");
+  const crashText = document.getElementById("clashText");
   const rageText = document.getElementById("rageText");
 
   const bossHud = document.getElementById("bossHud");
   const bossBar = document.getElementById("bossBar");
   const bossText = document.getElementById("bossText");
 
-  // ===== Utils =====
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const rand = (a, b) => a + Math.random() * (b - a);
   const dist2 = (ax, ay, bx, by) => {
@@ -45,7 +43,7 @@
   const W = BASE_W;
   const H = BASE_H;
 
-  // ===== Input =====
+  // ===== Input (keyboard) =====
   const keys = new Set();
   window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
@@ -55,6 +53,48 @@
     }
   }, { passive: false });
   window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+
+  // ===== Drag-follow (swipe) =====
+  let drag = { active: false, id: null, tx: 0, ty: 0 };
+
+  function cssToGamePoint(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const xCss = clientX - rect.left;
+    const yCss = clientY - rect.top;
+    const gx = (xCss / rect.width) * W;
+    const gy = (yCss / rect.height) * H;
+    return { x: gx, y: gy };
+  }
+
+  function canControl() {
+    return running && !paused && !gameOver && player && player.alive;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (!canControl()) return;
+    drag.active = true;
+    drag.id = e.pointerId;
+    const p = cssToGamePoint(e.clientX, e.clientY);
+    drag.tx = p.x;
+    drag.ty = p.y;
+    if (audio) audio.ac.resume().catch(() => {});
+  }, { passive: true });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag.active || drag.id !== e.pointerId) return;
+    if (!canControl()) return;
+    const p = cssToGamePoint(e.clientX, e.clientY);
+    drag.tx = p.x;
+    drag.ty = p.y;
+  }, { passive: true });
+
+  function endDrag(e) {
+    if (!drag.active || drag.id !== e.pointerId) return;
+    drag.active = false;
+    drag.id = null;
+  }
+  canvas.addEventListener("pointerup", endDrag, { passive: true });
+  canvas.addEventListener("pointercancel", endDrag, { passive: true });
 
   // ===== Responsive canvas scaling =====
   let dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
@@ -227,8 +267,8 @@
 
   // ===== Entities =====
   const stars = [];
-  const bullets = [];       // player bullets (basic/homing/spiral/bomb)
-  const enemyBullets = [];  // enemy & boss bullets
+  const bullets = [];
+  const enemyBullets = [];
   const enemies = [];
   const particles = [];
   const items = [];
@@ -247,48 +287,41 @@
   let shakeTime = 0;
   let shakeAmp = 0;
 
-  // kill counters
   let kill100 = 0, kill300 = 0, kill500 = 0;
+
+  let crashKills = 0;
+
   let nextHealAt100 = 10;
   let nextSuperAt300 = 5;
   let nextSuperAt100 = 30;
   let nextPowerAt500 = 1;
   let nextPowerAt100 = 50;
 
-  // boss schedule
   let bossNextScore = 10000;
   let bossLevel = 1;
 
-  // spawn pacing
   let enemySpawnTimer = 0;
   let enemySpawnInterval = 0.62;
 
-  // continue
   let continueLeft = 10;
   let continueTimer = null;
   let continueSnapshot = null;
 
-  // clash combo
-  let clashCombo = 0;
+  let clashStreak = 0;
   let clashDecay = 0;
 
-  // RAGE (power=100 reached + 20s)
   let power100ReachedAt = null;
-  let enemyRage = 1;        // 1 or 10 (atk/hp multiplier)
-  let enemyRageCount = 1;   // 1 or 10 (spawn multiplier)
+  let enemyRage = 1;
+  let enemyRageCount = 1;
 
-  // pattern state
   let spiralAngle = 0;
 
-  // laser (persistent beam)
-  let beam = null;          // { active, w, tickAcc, dmg, humAcc }
+  let beam = null;
 
-  // ===== Config =====
   const PLAYER_MAX_HP = 120;
   const PLAYER_HIT_R = 14;
   const BOSS_BASE_HP = 300;
 
-  // ===== FX helpers =====
   function shake(time, amp) {
     shakeTime = Math.max(shakeTime, time);
     shakeAmp = Math.max(shakeAmp, amp);
@@ -352,7 +385,7 @@
   function spawnClashFx(x, y) {
     audio.sfx.clash();
 
-    const c = clamp(clashCombo, 0, 60);
+    const c = clamp(clashStreak, 0, 60);
     const s = 0.85 + c / 35;
     const extra = Math.floor(c * 0.8);
 
@@ -391,6 +424,9 @@
           spawnBurst(e.x, e.y, 34, enemyColorGlow(e.type), 1.2);
           spawnRing(e.x, e.y, "rgba(223,246,255,.25)", 210);
           score += e.pts;
+
+          crashKills += 1;
+
           if (e.type === 100) kill100++;
           else if (e.type === 300) kill300++;
           else kill500++;
@@ -448,14 +484,13 @@
 
   // ===== Enemy spawn =====
   function enemyConf(type) {
-    const rage = enemyRage; // hp multiplier
+    const rage = enemyRage;
     if (type === 100) return { pts:100, hp:1 * rage,  sp:rand(120, 170), r:18 };
     if (type === 300) return { pts:300, hp:10 * rage, sp:rand(110, 160), r:22 };
     return              { pts:500, hp:50 * rage, sp:rand(105, 150), r:24 };
   }
 
   function pickSpawnSide() {
-    // RAGE発動後は四方向（前/左/右/後）から出現
     if (enemyRage === 10) {
       const t = Math.random();
       if (t < 0.25) return "top";
@@ -488,7 +523,7 @@
       y = rand(120, H - 120);
       vx = -sp;
       vy = rand(-70, 70);
-    } else { // bottom
+    } else {
       x = rand(60, W - 60);
       y = H + 50;
       vx = rand(-40, 40);
@@ -510,7 +545,6 @@
   }
 
   function spawnWeightedEnemy(forcedSide = null) {
-    // 300は100の0.3、500は0.1
     const t = Math.random() * 1.4;
     if (t < 1.0) return spawnEnemy(100, forcedSide);
     if (t < 1.3) return spawnEnemy(300, forcedSide);
@@ -536,18 +570,18 @@
       r: 70 + bossLevel * 4,
       shootT: 0,
       atkMult,
-      modeSeed: Math.random() * 1000
+      modeSeed: Math.random() * 1000,
+      seed2: Math.random() * 1000
     };
 
     bossHud.classList.remove("hidden");
     audio.stopBgm();
     audio.playBgm("boss");
 
-    // ★ POWER=100以降：ボス出現時に雑魚も同時出現
     if (power >= 100) {
       const base = (enemyRage === 10 ? 12 : 6);
       spawnWave(base);
-      if (enemyRage === 10) spawnWave(6); // さらに厚め
+      if (enemyRage === 10) spawnWave(6);
     }
 
     updateHud();
@@ -556,10 +590,8 @@
   function checkBossSpawn() {
     if (boss) return;
     if (score > bossNextScore) {
-      // ★ POWER=100以降は +20000 で出現
       if (power >= 100) bossNextScore = bossNextScore + 20000;
       else bossNextScore = bossNextScore * 2;
-
       spawnBoss();
     }
   }
@@ -569,12 +601,11 @@
     player = {
       x: W * 0.5,
       y: H * 0.84,
-      hp: PLAYER_MAX_HP,
-      maxHp: PLAYER_MAX_HP,
+      hp: 120,
+      maxHp: 120,
       invuln: 0.6,
       alive: true,
 
-      // cooldowns
       cdBasic: 0,
       cdHoming: 0,
       cdSpiral: 0,
@@ -587,8 +618,7 @@
       w: 12,
       tickAcc: 0,
       dmg: 1,
-      humAcc: 0,
-      justStarted: false
+      humAcc: 0
     };
   }
 
@@ -618,46 +648,40 @@
     return left;
   }
 
-  // ===== Power specs (積み上がり) =====
+  // ===== Power specs =====
   function basicForwardSpec() {
     const p = clamp(power, 1, 10);
     const t = (p - 1) / 9;
-    const count = 1 + Math.floor(t * 9);      // 1..10
+    const count = 1 + Math.floor(t * 9);
     const spread = 0.03 + t * 0.65;
     return { count, spread };
   }
-
   function laserSpec() {
     if (power < 11) return { enabled:false };
-    const t = clamp((power - 11) / 9, 0, 1); // 11..20
-    // 持続ビーム幅とダメージ（帯の強さ）
+    const t = clamp((power - 11) / 9, 0, 1);
     const w = 10 + t * 22;
-    const dmg = 1 + Math.floor(t * 2);        // 1..3
-    const tick = clamp(0.08 - t * 0.03, 0.04, 0.08); // ヒット刻み
+    const dmg = 1 + Math.floor(t * 2);
+    const tick = clamp(0.08 - t * 0.03, 0.04, 0.08);
     return { enabled:true, w, dmg, tick };
   }
-
   function homingSpec() {
     if (power < 21) return { enabled:false, perSide:0 };
     const t = clamp((power - 21) / 19, 0, 1);
-    const perSide = 1 + Math.floor(t * 4); // 1..5
+    const perSide = 1 + Math.floor(t * 4);
     return { enabled:true, perSide };
   }
-
   function spiralSpec() {
     if (power < 41) return { enabled:false, count:0, rot:0 };
     const t = clamp((power - 41) / 19, 0, 1);
-    const count = 2 + Math.floor(t * 10);     // 2..12 per burst
+    const count = 2 + Math.floor(t * 10);
     const rot = 2.4 + t * 4.6;
     return { enabled:true, count, rot };
   }
-
   function clonesSpec() {
     if (power < 60) return { enabled:false, alpha:0 };
     const t = clamp((power - 60) / 20, 0, 1);
     return { enabled:true, alpha: t };
   }
-
   function bombSpec() {
     if (power < 80) return { enabled:false };
     const t = clamp((power - 80) / 20, 0, 1);
@@ -679,7 +703,7 @@
     return best;
   }
 
-  // ===== Super shot (P) =====
+  // ===== Super shot =====
   function fireSuperShot() {
     if (superShots <= 0) return;
     superShots = clamp(superShots - 1, 0, 999);
@@ -693,8 +717,9 @@
 
     audio.sfx.super();
 
-    // 雑魚全滅（ボス無効）
     if (enemies.length > 0) {
+      crashKills += enemies.length;
+
       for (const e of enemies) {
         score += e.pts;
         if (e.type === 100) kill100++;
@@ -708,7 +733,6 @@
       checkBossSpawn();
     }
 
-    // 雑魚弾だけ消去（ボス弾は残す）
     for (let i = enemyBullets.length - 1; i >= 0; i--) {
       if (enemyBullets[i].source !== "boss") enemyBullets.splice(i, 1);
     }
@@ -716,9 +740,23 @@
     updateHud();
   }
 
-  // ==========================================================
-  // 弾×弾 相殺
-  // ==========================================================
+  function triggerSuperFromUI() {
+    if (!running || paused) return;
+    if (audio) audio.ac.resume().catch(() => {});
+    fireSuperShot();
+  }
+
+  superBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    triggerSuperFromUI();
+  }, { passive: false });
+
+  superBtn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    triggerSuperFromUI();
+  }, { passive: false });
+
+  // ===== Bullet clash =====
   function bulletClashCheck() {
     const maxChecks = 18000;
     let checks = 0;
@@ -735,7 +773,7 @@
           bullets.splice(i, 1);
           enemyBullets.splice(j, 1);
 
-          clashCombo = clamp(clashCombo + 1, 0, 60);
+          clashStreak = clamp(clashStreak + 1, 0, 60);
           clashDecay = 0.65;
 
           const mx = (pb.x + eb.x) * 0.5;
@@ -747,20 +785,15 @@
     }
   }
 
-  // ==========================================================
-  // レーザ（持続ビーム）×敵弾 相殺（当たり判定帯）
-  // ==========================================================
   function beamClashCheck(beamRect) {
-    // beamRect: {x0,x1,y0,y1}
     for (let j = enemyBullets.length - 1; j >= 0; j--) {
       const eb = enemyBullets[j];
-      // ビーム帯のAABBに敵弾中心が入ったら相殺
       if (eb.x >= beamRect.x0 - eb.r && eb.x <= beamRect.x1 + eb.r &&
           eb.y >= beamRect.y0 - eb.r && eb.y <= beamRect.y1 + eb.r) {
 
         enemyBullets.splice(j, 1);
 
-        clashCombo = clamp(clashCombo + 1, 0, 60);
+        clashStreak = clamp(clashStreak + 1, 0, 60);
         clashDecay = 0.65;
 
         spawnClashFx(eb.x, eb.y);
@@ -768,7 +801,6 @@
     }
   }
 
-  // ===== Reset helpers =====
   function clearEntities() {
     bullets.length = 0;
     enemyBullets.length = 0;
@@ -788,6 +820,8 @@
     postBossDifficulty = 0;
 
     kill100 = 0; kill300 = 0; kill500 = 0;
+    crashKills = 0;
+
     nextHealAt100 = 10;
     nextSuperAt300 = 5;
     nextSuperAt100 = 30;
@@ -803,7 +837,7 @@
     shakeTime = 0;
     shakeAmp = 0;
 
-    clashCombo = 0;
+    clashStreak = 0;
     clashDecay = 0;
 
     power100ReachedAt = null;
@@ -823,7 +857,7 @@
     scoreText.textContent = String(score);
     powerText.textContent = String(power);
     superText.textContent = String(superShots);
-    clashText.textContent = String(clashCombo);
+    crashText.textContent = String(crashKills);
 
     const hpPct = clamp(player.hp / player.maxHp, 0, 1);
     hpBar.style.width = `${hpPct * 100}%`;
@@ -841,7 +875,6 @@
       bossHud.classList.add("hidden");
     }
 
-    // RAGE HUD
     if (enemyRage === 10) {
       rageText.textContent = "ON";
     } else {
@@ -947,6 +980,8 @@
       nextSuperAt100 = snap.nextSuperAt100;
       nextPowerAt500 = snap.nextPowerAt500;
       nextPowerAt100 = snap.nextPowerAt100;
+
+      crashKills = 0;
     }
 
     gameOver = false;
@@ -984,9 +1019,8 @@
     startOverlay.classList.remove("hidden");
   }
 
-  // ===== Player firing (積み上がり) =====
+  // ===== Player firing =====
   function firePlayer(dt) {
-    // 1) 基本前方弾（1..10）
     player.cdBasic -= dt;
     if (player.cdBasic <= 0) {
       const spec = basicForwardSpec();
@@ -1022,22 +1056,16 @@
       audio.sfx.shot();
     }
 
-    // 2) レーザは「持続ビーム」（別処理：update内で当たり判定帯として処理）
-    // ここでは開始音だけ制御
     const ls = laserSpec();
     if (ls.enabled) {
-      if (!beam.active) {
-        beam.active = true;
-        beam.justStarted = true;
-        audio.sfx.laserStart();
-      }
+      if (!beam.active) audio.sfx.laserStart();
+      beam.active = true;
       beam.w = ls.w;
       beam.dmg = ls.dmg;
     } else {
       beam.active = false;
     }
 
-    // 3) 紫ホーミング（21..40で追加、以後維持）
     const hs = homingSpec();
     if (hs.enabled) {
       player.cdHoming -= dt;
@@ -1066,7 +1094,6 @@
       }
     }
 
-    // 4) 渦巻弾（41..60で追加、以後維持）
     const ss = spiralSpec();
     if (ss.enabled) {
       player.cdSpiral -= dt;
@@ -1097,7 +1124,6 @@
       }
     }
 
-    // 5) 分身（60..80）— 分身位置から弾を発射（見た目は本体同等シルエット）
     const cs = clonesSpec();
     if (cs.enabled) {
       player.cdClone -= dt;
@@ -1121,16 +1147,12 @@
         };
 
         const ox = 54, oy = 54;
-        // 後ろ分身（後方へ）
         emit(player.x, player.y + oy, 0, spd);
-        // 左分身（左へ）
         emit(player.x - ox, player.y, -spd, 0);
-        // 右分身（右へ）
         emit(player.x + ox, player.y, spd, 0);
       }
     }
 
-    // 6) ボム弾（80..100）
     const bs = bombSpec();
     if (bs.enabled) {
       player.cdBomb -= dt;
@@ -1160,7 +1182,6 @@
   function update(dt) {
     if (!running || paused) return;
 
-    // stars
     for (const s of stars) {
       s.y += s.sp * dt * (0.65 + s.z * 1.1);
       s.tw += dt * (0.8 + s.z);
@@ -1173,60 +1194,58 @@
       }
     }
 
-    // clash combo decay
     if (clashDecay > 0) {
       clashDecay -= dt;
       if (clashDecay <= 0) {
-        clashCombo = Math.max(0, clashCombo - 2);
-        if (clashCombo > 0) clashDecay = 0.35;
+        clashStreak = Math.max(0, clashStreak - 2);
+        if (clashStreak > 0) clashDecay = 0.35;
       }
     }
 
-    // RAGE timing
     handlePower100Timer(dt);
 
-    // spawn interval
     const scoreFactor = Math.min(1.0, score / 50000);
     enemySpawnInterval = clamp(0.62 - scoreFactor * 0.22 - postBossDifficulty * 0.04, 0.20, 0.62);
-    // RAGE時は湧きのテンポも少し上げる（数×10は「同時出現数」で担保）
     const intervalMult = (enemyRage === 10 ? 0.65 : 1.0);
 
-    // player move
-    const ax = (keys.has("a") ? -1 : 0) + (keys.has("d") ? 1 : 0);
-    const ay = (keys.has("w") ? -1 : 0) + (keys.has("s") ? 1 : 0);
+    const ax =
+      (keys.has("a") || keys.has("arrowleft") ? -1 : 0) +
+      (keys.has("d") || keys.has("arrowright") ?  1 : 0);
+
+    const ay =
+      (keys.has("w") || keys.has("arrowup") ? -1 : 0) +
+      (keys.has("s") || keys.has("arrowdown") ?  1 : 0);
 
     player.x += ax * 380 * dt;
     player.y += ay * 380 * dt;
+
+    if (drag.active) {
+      const follow = clamp(18 * dt, 0, 1);
+      player.x += (drag.tx - player.x) * follow;
+      player.y += (drag.ty - player.y) * follow;
+    }
+
     player.x = clamp(player.x, 34, W - 34);
     player.y = clamp(player.y, 90, H - 50);
 
-    // super
     if (keys.has("p")) { keys.delete("p"); fireSuperShot(); }
 
-    // fire
     firePlayer(dt);
 
-    // ===== Enemy spawn rules =====
-    // ボス中でも「POWER=100以降」は雑魚を継続出現させる
     const canSpawn = (!boss) || (power >= 100);
-
     if (canSpawn) {
       enemySpawnTimer -= dt;
       if (enemySpawnTimer <= 0) {
         enemySpawnTimer = enemySpawnInterval * intervalMult;
-
-        // ★ RAGE時：敵数×10（同時に10体生成）
         const n = enemyRageCount;
         for (let i = 0; i < n; i++) spawnWeightedEnemy();
       }
     }
 
-    // enemies update & shoot
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
       e.phase += dt * (1.2 + e.type / 500 * 0.8);
 
-      // 進行方向に応じて揺らす
       const sway = Math.sin(e.phase) * (50 + e.type / 500 * 40);
       if (Math.abs(e.vy) >= Math.abs(e.vx)) {
         e.x += (e.vx * dt) + (sway * dt);
@@ -1246,7 +1265,6 @@
         const spread = (e.type === 100 ? 0.8 : e.type === 300 ? 1.2 : 1.55);
         const spd = 220 + e.type * 0.10 + postBossDifficulty * 12;
 
-        // ★ 敵攻撃力×10（RAGE）
         const dmgBase = (e.type === 100 ? 7 : e.type === 300 ? 9 : 11) + Math.floor(postBossDifficulty * 0.6);
         const dmg = dmgBase * enemyRage;
 
@@ -1270,11 +1288,21 @@
       if (e.x < -140 || e.x > W + 140 || e.y < -160 || e.y > H + 160) enemies.splice(i, 1);
     }
 
-    // boss update & shoot
     if (boss) {
       boss.t += dt;
+
       boss.x = W * 0.5 + Math.sin(boss.t * 0.85) * (190 + boss.level * 6);
-      boss.y = 140 + Math.sin(boss.t * 0.55) * 24;
+
+      const t = boss.t;
+      const wave = Math.sin(t * 0.28 + boss.modeSeed) * 120;
+      const lungeRaw = Math.sin(t * 0.95 + boss.seed2);
+      const lunge = Math.pow(Math.max(0, lungeRaw), 2);
+      const approachBase = 130 + lunge * 280;
+      const towardPlayer = (player.y - (90 + wave + approachBase)) * (0.14 * lunge);
+
+      let y = 90 + wave + approachBase + towardPlayer;
+      y = clamp(y, 80, 460);
+      boss.y = y;
 
       boss.shootT -= dt;
       if (boss.shootT <= 0) {
@@ -1293,14 +1321,8 @@
 
           for (let k = 0; k < n; k++) {
             const a = (k / n) * Math.PI * 2 + boss.t * (0.6 + lvl * 0.08);
-            enemyBullets.push({
-              x: boss.x, y: boss.y,
-              vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
-              r: 4.8, dmg,
-              col: (lvl <= 1 ? "rgba(255,209,102,.95)" : "rgba(140,0,255,.85)"),
-              t: 0,
-              source: "boss"
-            });
+            enemyBullets.push({ x: boss.x, y: boss.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, r: 4.8, dmg,
+              col: (lvl <= 1 ? "rgba(255,209,102,.95)" : "rgba(140,0,255,.85)"), t: 0, source: "boss" });
           }
         } else if (phase === 1) {
           const n = 16 + lvl * 2 + postBossDifficulty * 2;
@@ -1309,16 +1331,10 @@
           const dmg = Math.floor((11 + lvl * 2) * mult);
 
           for (let k = 0; k < n; k++) {
-            const t = (n === 1) ? 0 : (k / (n - 1) - 0.5);
-            const a = aim + t * spread + Math.sin(boss.t * 1.2) * 0.08 * lvl;
-            enemyBullets.push({
-              x: boss.x, y: boss.y,
-              vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
-              r: 4.8, dmg,
-              col: (lvl <= 1 ? "rgba(255,77,109,.92)" : "rgba(255,0,80,.82)"),
-              t: 0,
-              source: "boss"
-            });
+            const tt = (n === 1) ? 0 : (k / (n - 1) - 0.5);
+            const a = aim + tt * spread + Math.sin(boss.t * 1.2) * 0.08 * lvl;
+            enemyBullets.push({ x: boss.x, y: boss.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, r: 4.8, dmg,
+              col: (lvl <= 1 ? "rgba(255,77,109,.92)" : "rgba(255,0,80,.82)"), t: 0, source: "boss" });
           }
         } else {
           const streams = 3 + Math.floor(lvl / 2);
@@ -1329,21 +1345,14 @@
           for (let s = 0; s < streams; s++) {
             for (let k = 0; k < per; k++) {
               const a = boss.t * (2.4 + lvl * 0.25) + k * 0.55 + s * (Math.PI * 2 / streams);
-              enemyBullets.push({
-                x: boss.x, y: boss.y,
-                vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
-                r: 4.6, dmg,
-                col: (lvl <= 1 ? "rgba(124,243,255,.9)" : "rgba(20,255,170,.75)"),
-                t: 0,
-                source: "boss"
-              });
+              enemyBullets.push({ x: boss.x, y: boss.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, r: 4.6, dmg,
+                col: (lvl <= 1 ? "rgba(124,243,255,.9)" : "rgba(20,255,170,.75)"), t: 0, source: "boss" });
             }
           }
         }
       }
     }
 
-    // bullets update
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       b.t += dt;
@@ -1382,32 +1391,26 @@
       if (b.y < -160 || b.y > H + 160 || b.x < -160 || b.x > W + 160) enemyBullets.splice(i, 1);
     }
 
-    // ===== Laser beam: hit & clash =====
     const ls = laserSpec();
     if (beam.active && ls.enabled) {
-      // ビーム矩形（画面端まで）
       const x0 = player.x - beam.w * 0.5;
       const x1 = player.x + beam.w * 0.5;
       const y0 = 0;
       const y1 = player.y - 34;
       const rect = { x0, x1, y0, y1 };
 
-      // ビームの低いハム音（連続が重くならないよう間引き）
       beam.humAcc += dt;
       if (beam.humAcc >= 0.12) {
         beam.humAcc = 0;
         audio.sfx.laserHum();
       }
 
-      // 敵弾と相殺
       beamClashCheck(rect);
 
-      // ダメージ刻み
       beam.tickAcc += dt;
       if (beam.tickAcc >= ls.tick) {
         beam.tickAcc = 0;
 
-        // 雑魚
         for (let i = enemies.length - 1; i >= 0; i--) {
           const e = enemies[i];
           if (e.x + e.r >= x0 && e.x - e.r <= x1 && e.y + e.r >= y0 && e.y - e.r <= y1) {
@@ -1422,6 +1425,8 @@
               shake(0.06, 5);
 
               score += e.pts;
+              crashKills += 1;
+
               if (e.type === 100) kill100++;
               else if (e.type === 300) kill300++;
               else kill500++;
@@ -1432,7 +1437,6 @@
           }
         }
 
-        // ボス
         if (boss) {
           if (boss.x + boss.r >= x0 && boss.x - boss.r <= x1 && boss.y + boss.r >= y0 && boss.y - boss.r <= y1) {
             boss.hp -= beam.dmg;
@@ -1447,6 +1451,8 @@
               spawnBurst(boss.x, boss.y, 160, "rgba(124,243,255,.85)", 1.2);
               spawnRing(boss.x, boss.y, "rgba(140,0,255,.35)", 820, 7);
               shake(0.8, 26);
+
+              crashKills += 1;
 
               score += 5000;
               player.hp = player.maxHp;
@@ -1470,21 +1476,17 @@
       }
     }
 
-    // ★ bullet clash (circle bullets)
     bulletClashCheck();
 
-    // items update
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
       it.t += dt;
       it.y += it.vy * dt;
 
       if (dist2(it.x, it.y, player.x, player.y) < (it.r + PLAYER_HIT_R) ** 2) {
-        if (it.kind === "heal") {
-          player.hp = player.maxHp;
-        } else if (it.kind === "super") {
-          superShots = clamp(superShots + 1, 0, 999);
-        } else if (it.kind === "power") {
+        if (it.kind === "heal") player.hp = player.maxHp;
+        else if (it.kind === "super") superShots = clamp(superShots + 1, 0, 999);
+        else if (it.kind === "power") {
           const prev = power;
           power = clamp(power + 1, 1, 100);
 
@@ -1494,8 +1496,6 @@
             spawnBurst(player.x, player.y, 100, "rgba(255,183,3,.85)", 1.1);
             shake(0.35, 12);
 
-            // ★ POWER=100到達以降：ボス周期を +20000 に切り替え
-            // 次のボスが遠すぎないよう、現スコア+20000 を下限にする
             bossNextScore = Math.max(bossNextScore, score + 20000);
           }
         }
@@ -1511,11 +1511,10 @@
       if (it.y > H + 80) items.splice(i, 1);
     }
 
-    // player bullets vs enemies/boss（レーザ以外）
+    // bullets vs enemies/boss (non-laser)
     for (let bi = bullets.length - 1; bi >= 0; bi--) {
       const b = bullets[bi];
 
-      // boss hit
       if (boss) {
         const rr = b.r + boss.r;
         if (dist2(b.x, b.y, boss.x, boss.y) < rr * rr) {
@@ -1538,6 +1537,8 @@
             spawnBurst(boss.x, boss.y, 160, "rgba(124,243,255,.85)", 1.2);
             spawnRing(boss.x, boss.y, "rgba(140,0,255,.35)", 820, 7);
             shake(0.8, 26);
+
+            crashKills += 1;
 
             score += 5000;
             player.hp = player.maxHp;
@@ -1562,7 +1563,6 @@
         }
       }
 
-      // enemies hit
       for (let ei = enemies.length - 1; ei >= 0; ei--) {
         const e = enemies[ei];
         const rr = b.r + e.r;
@@ -1585,6 +1585,8 @@
             shake(0.07, 5);
 
             score += e.pts;
+            crashKills += 1;
+
             if (e.type === 100) kill100++;
             else if (e.type === 300) kill300++;
             else kill500++;
@@ -1625,7 +1627,6 @@
       }
     }
 
-    // particles
     for (let i = particles.length - 1; i >= 0; i--) {
       const p = particles[i];
       p.t += dt;
@@ -1656,7 +1657,6 @@
       if (shakeTime <= 0) { shakeTime = 0; shakeAmp = 0; }
     }
 
-    // boss spawn check
     checkBossSpawn();
     updateHud();
   }
@@ -1705,24 +1705,18 @@
     }
     ctx.globalAlpha = 1;
 
-    // enemies
     for (const e of enemies) drawEnemy(e);
     if (boss) drawBoss(boss);
 
-    // ===== Laser beam draw (bullets layer) =====
     if (beam && beam.active && power >= 11) drawLaserBeam();
 
-    // bullets
     for (const b of bullets) drawPlayerBullet(b);
     for (const b of enemyBullets) drawEnemyBullet(b);
 
-    // items overlay bullets
     for (const it of items) drawItem(it);
 
-    // player + clones (most front)
     if (player && player.alive) drawPlayerWithClones(player);
 
-    // particles
     for (const p of particles) drawParticle(p);
 
     ctx.restore();
@@ -1730,31 +1724,16 @@
 
   // ===== Draw helpers =====
   function drawPlayerWithClones(p) {
-    // clones are same silhouette as player
     const cs = clonesSpec();
     if (cs.enabled) {
       const a = cs.alpha;
       const ox = 54, oy = 54;
 
-      drawFighter(p.x, p.y + oy, 0.78 * a, true);      // rear clone
-      drawFighter(p.x - ox, p.y, 0.78 * a, true);      // left clone
-      drawFighter(p.x + ox, p.y, 0.78 * a, true);      // right clone
+      drawFighter(p.x, p.y + oy, 0.78 * a, true);
+      drawFighter(p.x - ox, p.y, 0.78 * a, true);
+      drawFighter(p.x + ox, p.y, 0.78 * a, true);
     }
-
     drawFighter(p.x, p.y, 1.0, false);
-
-    // invuln ring
-    if (p.invuln > 0) {
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.globalAlpha = 0.55;
-      ctx.strokeStyle = "rgba(255,209,102,.9)";
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(0, 0, 22, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
   }
 
   function drawFighter(x, y, alpha, isClone) {
@@ -1762,7 +1741,6 @@
     ctx.translate(x, y);
     ctx.globalAlpha = alpha;
 
-    // gold aura at power 100
     if (power >= 100) {
       const tt = performance.now() * 0.006;
       const aura = ctx.createRadialGradient(0, 0, 10, 0, 0, isClone ? 80 : 120);
@@ -1792,17 +1770,15 @@
       }
     }
 
-    // engine glow
     ctx.globalAlpha *= 0.9;
     const eg = ctx.createRadialGradient(0, 28, 2, 0, 28, 34);
     eg.addColorStop(0, "rgba(52,255,179,.85)");
     eg.addColorStop(1, "rgba(52,255,179,0)");
     ctx.fillStyle = eg;
     ctx.beginPath();
-    ctx.arc(0, 28, 32, 0, Math.PI * 2);
+    ctx.arc(0, 0, 44, 0, Math.PI * 2);
     ctx.fill();
 
-    // thrust plume
     ctx.globalAlpha *= 0.4;
     ctx.fillStyle = "rgba(124,243,255,.9)";
     ctx.beginPath();
@@ -1810,7 +1786,6 @@
     ctx.fill();
     ctx.globalAlpha /= 0.4;
 
-    // body
     ctx.globalAlpha /= 0.9;
     ctx.fillStyle = "rgba(223,246,255,.95)";
     if (isClone) ctx.fillStyle = "rgba(223,246,255,.86)";
@@ -1826,32 +1801,6 @@
     ctx.lineTo(-30, 18);
     ctx.lineTo(-18, -6);
     ctx.closePath();
-    ctx.fill();
-
-    // canopy
-    ctx.fillStyle = "rgba(10,18,35,.9)";
-    ctx.beginPath();
-    ctx.moveTo(0, -26);
-    ctx.lineTo(8, -6);
-    ctx.lineTo(0, 6);
-    ctx.lineTo(-8, -6);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = "rgba(124,243,255,.85)";
-    ctx.beginPath();
-    ctx.ellipse(0, -10, 7, 12, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // glow
-    const glowK = clamp(power / 100, 0, 1);
-    ctx.globalAlpha *= (0.10 + glowK * 0.18);
-    const ag = ctx.createRadialGradient(0, 0, 8, 0, 0, isClone ? 56 : 80);
-    ag.addColorStop(0, power >= 100 ? "rgba(255,183,3,.55)" : "rgba(124,243,255,.45)");
-    ag.addColorStop(1, "rgba(124,243,255,0)");
-    ctx.fillStyle = ag;
-    ctx.beginPath();
-    ctx.arc(0, 0, isClone ? 56 : 80, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
@@ -1875,28 +1824,16 @@
     halo.addColorStop(0, `rgba(52,255,179,${0.22*flick})`);
     halo.addColorStop(1, `rgba(124,243,255,${0.18*flick})`);
 
-    // outer halo
     ctx.save();
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.roundRect(x0 - beam.w * 0.85, y0, (x1 - x0) + beam.w * 1.7, (y1 - y0), beam.w);
     ctx.fill();
 
-    // core
     ctx.fillStyle = core;
     ctx.beginPath();
     ctx.roundRect(x0, y0, (x1 - x0), (y1 - y0), beam.w);
     ctx.fill();
-
-    // spark line accents
-    ctx.globalAlpha = 0.35;
-    ctx.strokeStyle = "rgba(255,209,102,.9)";
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo((x0 + x1) * 0.5, y1);
-    ctx.lineTo((x0 + x1) * 0.5 + Math.sin(performance.now()*0.01) * 4, y0);
-    ctx.stroke();
-
     ctx.restore();
   }
 
@@ -1906,95 +1843,107 @@
     return drawDevil(e);
   }
 
-  function drawUFO(e) {
-    ctx.save(); ctx.translate(e.x, e.y);
-    ctx.globalAlpha = 0.9;
-    const gg = ctx.createRadialGradient(0, 0, 4, 0, 0, 58);
-    gg.addColorStop(0, "rgba(124,243,255,.55)");
-    gg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = gg;
-    ctx.beginPath(); ctx.arc(0, 0, 56, 0, Math.PI * 2); ctx.fill();
+  // ★ 修正点：薄い円(オーラ)描画を削除
+  function drawUFO(e){
+    ctx.save(); ctx.translate(e.x,e.y);
+    ctx.globalAlpha=1;
+
+    ctx.fillStyle="rgba(223,246,255,.92)";
+    ctx.beginPath(); ctx.ellipse(0,6,30,12,0,0,Math.PI*2); ctx.fill();
+
+    ctx.fillStyle="rgba(124,243,255,.85)";
+    ctx.beginPath(); ctx.ellipse(0,0,14,10,0,Math.PI,0,true); ctx.fill();
+
+    ctx.fillStyle="rgba(255,209,102,.92)";
+    for(let i=-2;i<=2;i++){ ctx.beginPath(); ctx.arc(i*10,10,2.2,0,Math.PI*2); ctx.fill(); }
+    ctx.restore();
+  }
+
+  // ★ 修正点：薄い円(オーラ)描画を削除
+  function drawAlien(e){
+    ctx.save(); ctx.translate(e.x,e.y);
+    ctx.globalAlpha=1;
+
+    ctx.fillStyle="rgba(52,255,179,.88)";
+    ctx.beginPath(); ctx.ellipse(0,0,18,24,0,0,Math.PI*2); ctx.fill();
+
+    ctx.fillStyle="rgba(10,18,35,.92)";
+    ctx.beginPath(); ctx.ellipse(-6,-4,6,9,-0.2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(6,-4,6,9,0.2,0,Math.PI*2); ctx.fill();
+
+    ctx.strokeStyle="rgba(10,18,35,.75)";
+    ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(0,10,6,0,Math.PI); ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawDevil(e){
+    ctx.save(); ctx.translate(e.x,e.y);
+
+    ctx.globalAlpha = 0.85;
+    const aura = ctx.createRadialGradient(0, 0, 10, 0, 0, 86);
+    aura.addColorStop(0, "rgba(255,77,109,.22)");
+    aura.addColorStop(0.45, "rgba(140,0,255,.18)");
+    aura.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(0,0,86,0,Math.PI*2); ctx.fill();
 
     ctx.globalAlpha = 1;
-    ctx.fillStyle = "rgba(223,246,255,.92)";
-    ctx.beginPath(); ctx.ellipse(0, 6, 30, 12, 0, 0, Math.PI * 2); ctx.fill();
-
-    ctx.fillStyle = "rgba(124,243,255,.85)";
-    ctx.beginPath(); ctx.ellipse(0, 0, 14, 10, 0, Math.PI, 0, true); ctx.fill();
+    const body = ctx.createRadialGradient(-8, -10, 6, 0, 0, 44);
+    body.addColorStop(0, "rgba(255,77,109,.95)");
+    body.addColorStop(0.55, "rgba(140,0,255,.88)");
+    body.addColorStop(1, "rgba(20,0,40,.92)");
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.ellipse(0, 6, 30, 26, 0, 0, Math.PI*2);
+    ctx.fill();
 
     ctx.fillStyle = "rgba(255,209,102,.92)";
-    for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.arc(i * 10, 10, 2.2, 0, Math.PI * 2); ctx.fill(); }
-    ctx.restore();
-  }
-
-  function drawAlien(e) {
-    ctx.save(); ctx.translate(e.x, e.y);
-    ctx.globalAlpha = 0.9;
-    const gg = ctx.createRadialGradient(0, 0, 4, 0, 0, 68);
-    gg.addColorStop(0, "rgba(255,209,102,.55)");
-    gg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = gg;
-    ctx.beginPath(); ctx.arc(0, 0, 66, 0, Math.PI * 2); ctx.fill();
-
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = "rgba(52,255,179,.88)";
-    ctx.beginPath(); ctx.ellipse(0, 0, 18, 24, 0, 0, Math.PI * 2); ctx.fill();
-
-    ctx.fillStyle = "rgba(10,18,35,.92)";
-    ctx.beginPath(); ctx.ellipse(-6, -4, 6, 9, -0.2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 6, -4, 6, 9,  0.2, 0, Math.PI*2); ctx.fill();
-
-    ctx.fillStyle = "rgba(223,246,255,.88)";
-    ctx.beginPath(); ctx.roundRect(-14, 18, 28, 20, 10); ctx.fill();
-
-    ctx.strokeStyle = "rgba(52,255,179,.85)";
-    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(-12, 26); ctx.lineTo(-28, 18);
-    ctx.moveTo( 12, 26); ctx.lineTo( 28, 18);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawDevil(e) {
-    ctx.save(); ctx.translate(e.x, e.y);
-    ctx.globalAlpha = 0.95;
-    const gg = ctx.createRadialGradient(0, 0, 6, 0, 0, 80);
-    gg.addColorStop(0, "rgba(255,77,109,.55)");
-    gg.addColorStop(0.4, "rgba(140,0,255,.25)");
-    gg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = gg;
-    ctx.beginPath(); ctx.arc(0, 0, 78, 0, Math.PI * 2); ctx.fill();
-
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = "rgba(255,77,109,.92)";
+    ctx.moveTo(-14, -16);
+    ctx.lineTo(-30, -38);
+    ctx.lineTo(-6, -28);
+    ctx.closePath();
+    ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(-8, 10);
-    ctx.quadraticCurveTo(-50, 10, -42, -18);
-    ctx.quadraticCurveTo(-24, -8, -8, 10);
+    ctx.moveTo(14, -16);
+    ctx.lineTo(30, -38);
+    ctx.lineTo(6, -28);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,77,109,.75)";
+    ctx.beginPath();
+    ctx.moveTo(-28, 8);
+    ctx.lineTo(-58, -6);
+    ctx.lineTo(-48, 18);
+    ctx.lineTo(-62, 30);
+    ctx.lineTo(-36, 26);
     ctx.closePath();
     ctx.fill();
 
     ctx.beginPath();
-    ctx.moveTo(8, 10);
-    ctx.quadraticCurveTo(50, 10, 42, -18);
-    ctx.quadraticCurveTo(24, -8, 8, 10);
+    ctx.moveTo(28, 8);
+    ctx.lineTo(58, -6);
+    ctx.lineTo(48, 18);
+    ctx.lineTo(62, 30);
+    ctx.lineTo(36, 26);
     ctx.closePath();
     ctx.fill();
 
-    ctx.fillStyle = "rgba(255,209,102,.92)";
-    ctx.beginPath(); ctx.ellipse(0, 6, 18, 16, 0, 0, Math.PI * 2); ctx.fill();
-
-    ctx.fillStyle = "rgba(140,0,255,.85)";
-    ctx.beginPath(); ctx.moveTo(-10, -6); ctx.lineTo(-20, -28); ctx.lineTo(-2, -12); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(10, -6); ctx.lineTo(20, -28); ctx.lineTo(2, -12); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "rgba(223,246,255,.95)";
+    ctx.beginPath(); ctx.ellipse(-10, 2, 5, 7, -0.25, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(10, 2, 5, 7, 0.25, 0, Math.PI*2); ctx.fill();
 
     ctx.fillStyle = "rgba(10,18,35,.95)";
-    ctx.beginPath(); ctx.ellipse(-6, 6, 5, 6, 0, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 6, 6, 5, 6, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = "rgba(255,0,80,.9)";
-    ctx.beginPath(); ctx.arc(-5, 5, 2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc( 7, 5, 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-10, 3, 2.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(10, 3, 2.2, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = "rgba(255,209,102,.92)";
+    ctx.beginPath(); ctx.moveTo(-6, 16); ctx.lineTo(-2, 10); ctx.lineTo(2, 16); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(6, 16); ctx.lineTo(2, 10); ctx.lineTo(-2, 16); ctx.closePath(); ctx.fill();
+
     ctx.restore();
   }
 
@@ -2002,158 +1951,77 @@
     ctx.save();
     ctx.translate(b.x, b.y);
 
-    const aura = ctx.createRadialGradient(0, 0, 12, 0, 0, 220);
-    aura.addColorStop(0, `rgba(140,0,255,${0.10 + b.level*0.02})`);
-    aura.addColorStop(0.35, `rgba(255,0,80,${0.08 + b.level*0.015})`);
-    aura.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = aura;
-    ctx.beginPath();
-    ctx.arc(0, 0, 220, 0, Math.PI * 2);
-    ctx.fill();
-
-    const coreCol = (b.level <= 1) ? "rgba(255,209,102,.95)" : "rgba(90,0,140,.92)";
-    ctx.fillStyle = coreCol;
-    ctx.beginPath();
-    ctx.roundRect(-70, -42, 140, 84, 22);
-    ctx.fill();
-
-    ctx.fillStyle = (b.level <= 1) ? "rgba(255,77,109,.92)" : "rgba(20,255,170,.70)";
-    for (let i = 0; i < 8 + b.level; i++) {
-      const a = (i / (8 + b.level)) * Math.PI * 2 + b.t * 0.6;
-      const r0 = 76, r1 = 96 + b.level * 4;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
-      ctx.lineTo(Math.cos(a + 0.18) * r1, Math.sin(a + 0.18) * r1);
-      ctx.lineTo(Math.cos(a - 0.18) * r1, Math.sin(a - 0.18) * r1);
-      ctx.closePath();
-      ctx.fill();
+    const lvl = b.level;
+    const core = ctx.createRadialGradient(-10, -10, 8, 0, 0, 140);
+    if (lvl <= 1) {
+      core.addColorStop(0, "rgba(255,209,102,.95)");
+      core.addColorStop(0.6, "rgba(255,77,109,.75)");
+      core.addColorStop(1, "rgba(40,0,60,.85)");
+    } else {
+      core.addColorStop(0, "rgba(255,0,80,.85)");
+      core.addColorStop(0.45, "rgba(140,0,255,.82)");
+      core.addColorStop(1, "rgba(10,0,20,.92)");
     }
 
-    ctx.fillStyle = "rgba(10,18,35,.95)";
-    ctx.beginPath();
-    ctx.ellipse(0, -6, 22, 14, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const near = clamp((b.y - 120) / 320, 0, 1);
+    ctx.globalAlpha = 0.9;
+    const aura = ctx.createRadialGradient(0, 0, 10, 0, 0, 220);
+    aura.addColorStop(0, `rgba(255,77,109,${0.22 + near*0.12})`);
+    aura.addColorStop(0.5, `rgba(140,0,255,${0.18 + near*0.10})`);
+    aura.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(0,0,220,0,Math.PI*2); ctx.fill();
 
-    const iris = (b.level <= 1) ? "rgba(124,243,255,.95)" : "rgba(255,0,80,.90)";
-    ctx.fillStyle = iris;
-    ctx.beginPath();
-    ctx.arc(8, -8, 5, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.globalAlpha = 0.35;
-    ctx.strokeStyle = (b.level <= 1) ? "rgba(223,246,255,.9)" : "rgba(140,0,255,.85)";
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, 76, 0, Math.PI * 2);
-    ctx.stroke();
     ctx.globalAlpha = 1;
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.roundRect(-90, -54, 180, 108, 26);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,209,102,.92)";
+    ctx.beginPath();
+    ctx.moveTo(-40, -56);
+    ctx.lineTo(-72, -92);
+    ctx.lineTo(-18, -74);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(40, -56);
+    ctx.lineTo(72, -92);
+    ctx.lineTo(18, -74);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(223,246,255,.92)";
+    ctx.beginPath(); ctx.ellipse(-24, -6, 10, 16, -0.25, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(24, -6, 10, 16, 0.25, 0, Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = "rgba(10,18,35,.95)";
+    ctx.beginPath(); ctx.arc(-24, -4, 4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(24, -4, 4, 0, Math.PI*2); ctx.fill();
+
+    ctx.strokeStyle = "rgba(255,209,102,.65)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 26, 26, 0.12*Math.PI, 0.88*Math.PI); ctx.stroke();
 
     ctx.restore();
   }
 
   function drawPlayerBullet(b) {
-    ctx.save();
-    ctx.translate(b.x, b.y);
-
-    if (b.type === "homing") {
-      const rg = ctx.createRadialGradient(0, 0, 2, 0, 0, 24);
-      rg.addColorStop(0, "rgba(180,90,255,.60)");
-      rg.addColorStop(0.55, "rgba(140,0,255,.35)");
-      rg.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = rg;
-      ctx.beginPath();
-      ctx.arc(0, 0, 22, 0, Math.PI*2);
-      ctx.fill();
-
-      ctx.fillStyle = "rgba(180,90,255,.95)";
-      ctx.beginPath();
-      ctx.ellipse(0, 0, b.r, b.r * 1.8, 0, 0, Math.PI*2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
-
-    if (b.type === "spiral") {
-      const rg = ctx.createRadialGradient(0, 0, 2, 0, 0, 22);
-      rg.addColorStop(0, "rgba(52,255,179,.35)");
-      rg.addColorStop(0.6, "rgba(124,243,255,.22)");
-      rg.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = rg;
-      ctx.beginPath();
-      ctx.arc(0, 0, 20, 0, Math.PI*2);
-      ctx.fill();
-
-      ctx.fillStyle = "rgba(52,255,179,.92)";
-      ctx.beginPath();
-      ctx.arc(0, 0, b.r, 0, Math.PI*2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
-
-    if (b.type === "bomb") {
-      const rg = ctx.createRadialGradient(0, 0, 4, 0, 0, 42);
-      rg.addColorStop(0, "rgba(255,209,102,.55)");
-      rg.addColorStop(0.45, "rgba(255,77,109,.30)");
-      rg.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = rg;
-      ctx.beginPath();
-      ctx.arc(0, 0, 40, 0, Math.PI*2);
-      ctx.fill();
-
-      ctx.fillStyle = "rgba(255,209,102,.95)";
-      ctx.beginPath();
-      ctx.arc(0, 0, b.r, 0, Math.PI*2);
-      ctx.fill();
-
-      ctx.fillStyle = "rgba(255,77,109,.9)";
-      ctx.beginPath();
-      ctx.arc(0, 0, b.r * 0.45, 0, Math.PI*2);
-      ctx.fill();
-
-      ctx.restore();
-      return;
-    }
-
-    // basic
-    const pK = clamp(power / 100, 0, 1);
-    const glow = 0.30 + pK * 0.60;
-    const halo = 18 + power * 0.10;
-
-    const rg = ctx.createRadialGradient(0, 0, 2, 0, 0, halo);
-    rg.addColorStop(0, power >= 100 ? `rgba(255,183,3,${glow})` : `rgba(124,243,255,${glow})`);
-    rg.addColorStop(0.55, power >= 100 ? `rgba(255,209,102,${glow * 0.85})` : `rgba(52,255,179,${glow * 0.75})`);
-    rg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = rg;
-    ctx.beginPath();
-    ctx.arc(0, 0, halo, 0, Math.PI * 2);
-    ctx.fill();
-
+    ctx.save(); ctx.translate(b.x, b.y);
     ctx.fillStyle = "rgba(223,246,255,.95)";
     ctx.beginPath();
     ctx.ellipse(0, 0, b.r, b.r * 1.6, 0, 0, Math.PI * 2);
     ctx.fill();
-
     ctx.restore();
   }
 
   function drawEnemyBullet(b) {
-    ctx.save();
-    ctx.translate(b.x, b.y);
-
-    const rg = ctx.createRadialGradient(0, 0, 2, 0, 0, 18);
-    rg.addColorStop(0, b.col);
-    rg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = rg;
+    ctx.save(); ctx.translate(b.x, b.y);
+    ctx.fillStyle = b.col || "rgba(124,243,255,.9)";
     ctx.beginPath();
-    ctx.arc(0, 0, 16, 0, Math.PI * 2);
+    ctx.arc(0, 0, b.r, 0, Math.PI*2);
     ctx.fill();
-
-    ctx.fillStyle = "rgba(223,246,255,.75)";
-    ctx.beginPath();
-    ctx.arc(0, 0, b.r, 0, Math.PI * 2);
-    ctx.fill();
-
     ctx.restore();
   }
 
@@ -2163,51 +2031,74 @@
     const bob = Math.sin(it.t * 4) * 3;
     ctx.translate(0, bob);
 
+    const glow = ctx.createRadialGradient(0, 0, 6, 0, 0, 46);
+    glow.addColorStop(0, "rgba(223,246,255,.18)");
+    glow.addColorStop(0.45, "rgba(124,243,255,.12)");
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0,0,46,0,Math.PI*2); ctx.fill();
+
     if (it.kind === "heal") {
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = "rgba(255,77,109,.95)";
+      ctx.globalAlpha = 0.98;
+      ctx.fillStyle = "rgba(255,77,109,.98)";
       heartPath(ctx, 0, 0, 20);
       ctx.fill();
-
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = "rgba(255,77,109,1)";
-      heartPath(ctx, 0, 0, 32);
-      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(223,246,255,.85)";
+      ctx.stroke();
     } else if (it.kind === "super") {
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = "rgba(255,209,102,.95)";
+      const pulse = 0.75 + 0.25 * Math.sin(it.t * 7);
+      const bg = ctx.createRadialGradient(-6, -8, 4, 0, 0, 28);
+      bg.addColorStop(0, `rgba(255,209,102,${0.98*pulse})`);
+      bg.addColorStop(0.55, `rgba(255,77,109,${0.92*pulse})`);
+      bg.addColorStop(1, `rgba(140,0,255,${0.82*pulse})`);
+
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "rgba(223,246,255,.92)";
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2); ctx.stroke();
+
+      ctx.fillStyle = bg;
       ctx.beginPath();
-      ctx.roundRect(-16, -16, 32, 32, 10);
-      ctx.fill();
-      ctx.fillStyle = "rgba(10,18,35,.9)";
-      ctx.beginPath();
-      ctx.moveTo(-4, -12);
-      ctx.lineTo(8, -12);
-      ctx.lineTo(0, 2);
-      ctx.lineTo(10, 2);
-      ctx.lineTo(-6, 14);
-      ctx.lineTo(0, 2);
+      ctx.moveTo(0, -22);
+      ctx.lineTo(22, 0);
+      ctx.lineTo(0, 22);
+      ctx.lineTo(-22, 0);
       ctx.closePath();
       ctx.fill();
 
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = "rgba(255,209,102,1)";
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = "rgba(223,246,255,.25)";
+      ctx.beginPath(); ctx.arc(0,0,18,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = "rgba(10,18,35,.92)";
       ctx.beginPath();
-      ctx.arc(0, 0, 30, 0, Math.PI * 2);
+      ctx.moveTo(-3, -14);
+      ctx.lineTo(7, -14);
+      ctx.lineTo(0, 0);
+      ctx.lineTo(8, 0);
+      ctx.lineTo(-6, 18);
+      ctx.lineTo(-1, 4);
+      ctx.lineTo(-10, 4);
+      ctx.closePath();
       ctx.fill();
+
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = "rgba(255,209,102,.85)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-30, -6); ctx.lineTo(-22, -6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(22, 6); ctx.lineTo(30, 6); ctx.stroke();
+      ctx.globalAlpha = 1;
     } else {
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = "rgba(124,243,255,.95)";
+      ctx.globalAlpha = 0.98;
+      ctx.fillStyle = "rgba(124,243,255,.98)";
       starPath(ctx, 0, 0, 9, 20, 5);
       ctx.fill();
-
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = "rgba(124,243,255,1)";
-      ctx.beginPath();
-      ctx.arc(0, 0, 30, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(223,246,255,.85)";
+      ctx.stroke();
     }
-
     ctx.restore();
   }
 
@@ -2218,7 +2109,6 @@
     c.bezierCurveTo(x + s * 0.5, y - s, x + s, y - s * 0.25, x, y + s * 0.35);
     c.closePath();
   }
-
   function starPath(c, x, y, innerR, outerR, spikes) {
     let rot = Math.PI / 2 * 3;
     let step = Math.PI / spikes;
@@ -2248,7 +2138,6 @@
       ctx.restore();
       return;
     }
-
     if (p.shard) {
       const t = p.t / p.life;
       ctx.save();
@@ -2262,7 +2151,6 @@
       ctx.restore();
       return;
     }
-
     const t = p.t / p.life;
     ctx.save();
     ctx.globalAlpha = (1 - t);

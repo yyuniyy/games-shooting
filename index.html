@@ -36,7 +36,7 @@
               <span class="hudSmall">(P)</span>
             </div>
             <div class="row">
-              <span class="hudLabel">CLASH</span>
+              <span class="hudLabel">CRASH</span>
               <span id="clashText" class="hudValue">0</span>
             </div>
             <div class="row">
@@ -55,14 +55,16 @@
         </div>
 
         <div class="hint">
-          移動: W/A/S/D　|　自動連射（POWERで積み上がり）　|　レーザ: 持続ビーム（11〜）　|　スーパーショット: P（雑魚全滅＆雑魚弾消去／ボス無効）
+          移動: W/A/S/D または ↑/←/↓/→ またはスワイプ(ドラッグ)　|　スーパーショット: P または画面ボタン
         </div>
       </div>
+
+      <button id="superBtn" class="superBtn" aria-label="Super Shot">SUPER<br><span>SHOT</span></button>
 
       <div id="startOverlay" class="overlay">
         <div class="title">COSMIC BARRAGE</div>
         <button id="startBtn" class="bigBtn">START</button>
-        <div class="sub">縦長スマホ想定 / POWER 1→100（攻撃は積み上がり）</div>
+        <div class="sub">縦長スマホ想定 / スワイプ(ドラッグ)操作対応 / SUPERボタンあり</div>
       </div>
 
       <div id="continueOverlay" class="overlay hidden">
@@ -80,7 +82,6 @@
         <div id="finalRank" class="result">RANK: -</div>
         <button id="restartBtn" class="bigBtn">RESTART</button>
       </div>
-
     </div>
   </div>
 
