@@ -59,20 +59,9 @@
 
       <!-- Mobile controls -->
       <div id="mobileControls" class="mobileControls hidden" aria-label="モバイル操作">
-        <div id="dpad" class="dpad" aria-label="8方向キー">
-          <button class="dpadBtn" data-dir="-1,-1" aria-label="左上">↖</button>
-          <button class="dpadBtn" data-dir="0,-1" aria-label="上">↑</button>
-          <button class="dpadBtn" data-dir="1,-1" aria-label="右上">↗</button>
-
-          <button class="dpadBtn" data-dir="-1,0" aria-label="左">←</button>
-          <div class="dpadCenter" aria-hidden="true"></div>
-          <button class="dpadBtn" data-dir="1,0" aria-label="右">→</button>
-
-          <button class="dpadBtn" data-dir="-1,1" aria-label="左下">↙</button>
-          <button class="dpadBtn" data-dir="0,1" aria-label="下">↓</button>
-          <button class="dpadBtn" data-dir="1,1" aria-label="右下">↘</button>
+        <div class="touchHint" aria-hidden="true">
+          HOLD &amp; MOVE
         </div>
-
         <button id="superBtn" class="superBtn" aria-label="スーパーショット">SUPER SHOT</button>
       </div>
 
@@ -80,7 +69,8 @@
       <div id="startOverlay" class="overlay">
         <div class="panel">
           <div class="title">COSMIC BARRAGE</div>
-          <div class="sub">WASD / 矢印キー（PC）・8方向キー（スマホ）</div>
+          <div class="sub">PC: WASD / 矢印キー</div>
+          <div class="sub">スマホ: 画面を押している間、押した方向へ移動</div>
           <div class="sub">P または SUPER SHOT で全画面爆発（ボス無効）</div>
           <button id="startBtn" class="primary">START</button>
         </div>

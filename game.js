@@ -20,6 +20,7 @@
   const finalRankEl = document.getElementById("finalRank");
 
   const superBtn = document.getElementById("superBtn");
+  const mobileControls = document.getElementById("mobileControls");
 
   const hpBar = document.getElementById("hpBar");
   const hpText = document.getElementById("hpText");
@@ -33,11 +34,6 @@
   const bossBar = document.getElementById("bossBar");
   const bossText = document.getElementById("bossText");
 
-  // Mobile D-Pad
-  const mobileControls = document.getElementById("mobileControls");
-  const dpad = document.getElementById("dpad");
-  const dpadButtons = Array.from(document.querySelectorAll(".dpadBtn"));
-
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const rand = (a, b) => a + Math.random() * (b - a);
   const dist2 = (ax, ay, bx, by) => {
@@ -48,15 +44,15 @@
   const W = BASE_W;
   const H = BASE_H;
 
-  // === Detect mobile/touch ===
-  const isTouchDevice = (() => {
+  // === Detect mobile/touch (UI表示用) ===
+  const isTouchLike = (() => {
     const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
     const ua = navigator.userAgent || "";
     const uaMobile = /Android|iPhone|iPad|iPod/i.test(ua);
     return coarse || uaMobile || ("ontouchstart" in window);
   })();
 
-  if (isTouchDevice) {
+  if (isTouchLike) {
     mobileControls.classList.remove("hidden");
   } else {
     mobileControls.classList.add("hidden");
@@ -73,52 +69,62 @@
   }, { passive: false });
   window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
-  // ===== Mobile D-Pad state (8-direction) =====
-  const activePads = new Map(); // pointerId -> {x,y}
-  let dpadVec = { x: 0, y: 0 };
+  // ===== Touch steering =====
+  const touchSteer = {
+    active: false,
+    x: W * 0.5,
+    y: H * 0.5,
+    pointerId: null
+  };
 
-  function recomputeDpadVec() {
-    let sx = 0, sy = 0;
-    for (const v of activePads.values()) { sx += v.x; sy += v.y; }
-    sx = clamp(sx, -1, 1);
-    sy = clamp(sy, -1, 1);
-
-    // Normalize diagonal to avoid faster movement
-    if (sx !== 0 && sy !== 0) {
-      const inv = 1 / Math.sqrt(2);
-      sx *= inv; sy *= inv;
-    }
-    dpadVec.x = sx;
-    dpadVec.y = sy;
+  function canvasToWorld(clientX, clientY) {
+    const r = canvas.getBoundingClientRect();
+    const nx = (clientX - r.left) / r.width;
+    const ny = (clientY - r.top) / r.height;
+    return { x: nx * W, y: ny * H };
   }
 
-  function parseDir(btn) {
-    const s = btn.getAttribute("data-dir") || "0,0";
-    const [x, y] = s.split(",").map(Number);
-    return { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
+  function setSteerFromEvent(e) {
+    const p = canvasToWorld(e.clientX, e.clientY);
+    touchSteer.x = p.x;
+    touchSteer.y = p.y;
   }
 
-  // Hold-to-move
-  for (const btn of dpadButtons) {
-    btn.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      if (audio) audio.ac.resume().catch(() => {});
-      btn.setPointerCapture(e.pointerId);
-      btn.classList.add("pressed");
-      activePads.set(e.pointerId, parseDir(btn));
-      recomputeDpadVec();
-    }, { passive: false });
+  const isSuperBtn = (e) => {
+    const t = e.target;
+    return t && (t === superBtn || superBtn.contains(t));
+  };
 
-    const end = (e) => {
-      if (activePads.has(e.pointerId)) activePads.delete(e.pointerId);
-      btn.classList.remove("pressed");
-      recomputeDpadVec();
-    };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    if (isSuperBtn(e)) return;
 
-    btn.addEventListener("pointerup", (e) => { e.preventDefault(); end(e); }, { passive: false });
-    btn.addEventListener("pointercancel", (e) => { e.preventDefault(); end(e); }, { passive: false });
-    btn.addEventListener("pointerleave", (e) => { if (e.pressure === 0) end(e); }, { passive: true });
+    e.preventDefault();
+    if (audio) audio.ac.resume().catch(() => {});
+    touchSteer.active = true;
+    touchSteer.pointerId = e.pointerId;
+    canvas.setPointerCapture(e.pointerId);
+    setSteerFromEvent(e);
+  }, { passive: false });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (!touchSteer.active) return;
+    if (touchSteer.pointerId !== e.pointerId) return;
+    if (e.pointerType !== "touch") return;
+
+    e.preventDefault();
+    setSteerFromEvent(e);
+  }, { passive: false });
+
+  function endTouchSteer(e) {
+    if (!touchSteer.active) return;
+    if (touchSteer.pointerId !== e.pointerId) return;
+    touchSteer.active = false;
+    touchSteer.pointerId = null;
   }
+
+  canvas.addEventListener("pointerup", (e) => { if (e.pointerType === "touch") { e.preventDefault(); endTouchSteer(e); } }, { passive: false });
+  canvas.addEventListener("pointercancel", (e) => { if (e.pointerType === "touch") { e.preventDefault(); endTouchSteer(e); } }, { passive: false });
 
   // ===== Responsive canvas scaling =====
   let dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
@@ -341,7 +347,6 @@
   let beam = null;
 
   const PLAYER_HIT_R = 14;
-  const BOSS_BASE_HP = 300;
 
   function shake(time, amp) {
     shakeTime = Math.max(shakeTime, time);
@@ -426,49 +431,6 @@
     }
   }
 
-  function spawnBombExplosion(x, y, radius, bossImmune = false) {
-    audio.sfx.bombBoom();
-    spawnRing(x, y, "rgba(255,209,102,.55)", radius * 1.8, 6);
-    spawnRing(x, y, "rgba(255,77,109,.45)", radius * 2.3, 5);
-    spawnBurst(x, y, 120, "rgba(255,209,102,.95)", 1.4);
-    spawnBurst(x, y, 90, "rgba(124,243,255,.85)", 1.1);
-    spawnShardBurst(x, y, 60, "rgba(223,246,255,.92)", "rgba(140,0,255,.65)", 1.0);
-    shake(0.25, 14);
-
-    const r2 = radius * radius;
-    for (let i = enemies.length - 1; i >= 0; i--) {
-      const e = enemies[i];
-      if (dist2(x, y, e.x, e.y) <= (r2 + e.r * e.r)) {
-        e.hp -= 10 + Math.floor(power * 0.15);
-        if (e.hp <= 0) {
-          audio.sfx.enemyBoom();
-          spawnBurst(e.x, e.y, 34, enemyColorGlow(e.type), 1.2);
-          spawnRing(e.x, e.y, "rgba(223,246,255,.25)", 210);
-          score += e.pts;
-          crashKills += 1;
-
-          if (e.type === 100) kill100++;
-          else if (e.type === 300) kill300++;
-          else kill500++;
-          enemies.splice(i, 1);
-        }
-      }
-    }
-
-    if (boss && !bossImmune) {
-      if (dist2(x, y, boss.x, boss.y) <= (r2 + boss.r * boss.r)) {
-        boss.hp -= 6 + Math.floor(power * 0.08);
-      }
-    }
-
-    for (let j = enemyBullets.length - 1; j >= 0; j--) {
-      const eb = enemyBullets[j];
-      if (eb.source === "boss") continue;
-      if (dist2(x, y, eb.x, eb.y) <= r2) enemyBullets.splice(j, 1);
-    }
-  }
-
-  // ===== Stars =====
   function initStars() {
     stars.length = 0;
     for (let i = 0; i < 220; i++) {
@@ -577,7 +539,7 @@
 
   // ===== Boss =====
   function spawnBoss() {
-    const hp = Math.floor(BOSS_BASE_HP * Math.pow(2, bossLevel - 1));
+    const hp = Math.floor(300 * Math.pow(2, bossLevel - 1));
     const atkMult = Math.pow(1.1, bossLevel - 1);
 
     boss = {
@@ -858,8 +820,8 @@
 
     spiralAngle = 0;
 
-    activePads.clear();
-    recomputeDpadVec();
+    touchSteer.active = false;
+    touchSteer.pointerId = null;
 
     respawnPlayerFull();
 
@@ -999,8 +961,8 @@
       crashKills = 0;
     }
 
-    activePads.clear();
-    recomputeDpadVec();
+    touchSteer.active = false;
+    touchSteer.pointerId = null;
 
     gameOver = false;
     paused = false;
@@ -1196,6 +1158,149 @@
     }
   }
 
+  // ===== 新規：自機弾→敵/ボス 当たり判定（復活） =====
+  function killEnemyAtIndex(i, xHint = null, yHint = null) {
+    const e = enemies[i];
+    audio.sfx.enemyBoom();
+    spawnBurst(e.x, e.y, 30, enemyColorGlow(e.type), 1.1);
+    spawnRing(e.x, e.y, "rgba(223,246,255,.25)", 190);
+    shake(0.06, 5);
+
+    score += e.pts;
+    crashKills += 1;
+
+    if (e.type === 100) kill100++;
+    else if (e.type === 300) kill300++;
+    else kill500++;
+
+    enemies.splice(i, 1);
+    handleKillMilestones();
+    checkBossSpawn();
+  }
+
+  function killBoss() {
+    audio.sfx.enemyBoom();
+    spawnBurst(boss.x, boss.y, 220, "rgba(255,77,109,.95)", 1.8);
+    spawnBurst(boss.x, boss.y, 180, "rgba(255,209,102,.90)", 1.5);
+    spawnBurst(boss.x, boss.y, 160, "rgba(124,243,255,.85)", 1.2);
+    spawnRing(boss.x, boss.y, "rgba(140,0,255,.35)", 820, 7);
+    shake(0.8, 26);
+
+    crashKills += 1;
+
+    score += 5000;
+    player.hp = player.maxHp;
+    power = clamp(power + 1, 1, 100);
+    superShots = clamp(superShots + 10, 0, 999);
+
+    boss = null;
+    bossHud.classList.add("hidden");
+
+    bossLevel += 1;
+    postBossDifficulty += 1;
+
+    audio.stopBgm();
+    audio.playBgm("normal");
+
+    checkBossSpawn();
+  }
+
+  function explodeBomb(x, y, radius) {
+    audio.sfx.bombBoom();
+    const t = clamp((power - 80) / 20, 0, 1);
+    const dmgE = 10 + Math.floor(t * 20);   // 敵への範囲ダメージ（派手さ重視）
+    const dmgB = 3 + Math.floor(t * 6);     // ボスへの範囲ダメージ（過剰にならない程度）
+
+    spawnRing(x, y, "rgba(255,209,102,.45)", radius * 2.2, 6);
+    spawnBurst(x, y, 120, "rgba(255,209,102,.90)", 1.25);
+    spawnBurst(x, y, 90, "rgba(255,77,109,.70)", 1.10);
+    spawnShardBurst(x, y, 40, "rgba(223,246,255,.95)", "rgba(255,77,109,.75)", 1.05);
+    shake(0.22, 14);
+
+    const r2 = radius * radius;
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      if (dist2(x, y, e.x, e.y) <= (radius + e.r) * (radius + e.r)) {
+        e.hp -= dmgE;
+        audio.sfx.enemyHit();
+        spawnBurst(e.x, e.y, 8, "rgba(223,246,255,.70)", 0.9);
+        if (e.hp <= 0) killEnemyAtIndex(i);
+      }
+    }
+
+    if (boss) {
+      if (dist2(x, y, boss.x, boss.y) <= (radius + boss.r) * (radius + boss.r)) {
+        boss.hp -= dmgB;
+        audio.sfx.enemyHit();
+        spawnBurst(boss.x + rand(-18, 18), boss.y + rand(-14, 14), 10, "rgba(255,209,102,.65)", 0.95);
+        if (boss.hp <= 0) killBoss();
+      }
+    }
+  }
+
+  function handlePlayerBulletHits() {
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+
+      // レーザーは別処理（当たり判定帯）
+      // ここでは「飛翔する弾」のみ扱う
+
+      // 1) まず敵との当たり判定
+      let hit = false;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const e = enemies[j];
+        const rr = b.r + e.r;
+        if (dist2(b.x, b.y, e.x, e.y) < rr * rr) {
+          hit = true;
+
+          // ボム弾は命中で爆発（範囲ダメージ）
+          if (b.type === "bomb") {
+            bullets.splice(i, 1);
+            explodeBomb(b.x, b.y, b.radius || 120);
+            break;
+          }
+
+          // 通常弾
+          e.hp -= (b.dmg || 1);
+          audio.sfx.enemyHit();
+          spawnBurst(e.x, e.y, 6, "rgba(223,246,255,.75)", 0.9);
+
+          bullets.splice(i, 1);
+
+          if (e.hp <= 0) {
+            killEnemyAtIndex(j);
+          }
+          break;
+        }
+      }
+      if (hit) continue;
+
+      // 2) 次にボスとの当たり判定（ボスがいる場合）
+      if (boss) {
+        const rr = b.r + boss.r;
+        if (dist2(b.x, b.y, boss.x, boss.y) < rr * rr) {
+          // ボム弾は命中で爆発（ボスにも範囲ダメ）
+          if (b.type === "bomb") {
+            bullets.splice(i, 1);
+            explodeBomb(b.x, b.y, b.radius || 120);
+            continue;
+          }
+
+          boss.hp -= (b.dmg || 1);
+          audio.sfx.enemyHit();
+          spawnBurst(boss.x + rand(-18, 18), boss.y + rand(-14, 14), 5, "rgba(255,209,102,.65)", 0.9);
+          shake(0.03, 3);
+
+          bullets.splice(i, 1);
+
+          if (boss.hp <= 0) {
+            killBoss();
+          }
+        }
+      }
+    }
+  }
+
   // ===== Main Update =====
   function update(dt) {
     if (!running || paused) return;
@@ -1226,7 +1331,8 @@
     enemySpawnInterval = clamp(0.62 - scoreFactor * 0.22 - postBossDifficulty * 0.04, 0.20, 0.62);
     const intervalMult = (enemyRage === 10 ? 0.65 : 1.0);
 
-    // Keyboard movement
+    // キーボードは常時有効、タッチは押している間だけ補助
+    let axKey = 0, ayKey = 0;
     const kx =
       (keys.has("a") || keys.has("arrowleft") ? -1 : 0) +
       (keys.has("d") || keys.has("arrowright") ?  1 : 0);
@@ -1235,9 +1341,26 @@
       (keys.has("w") || keys.has("arrowup") ? -1 : 0) +
       (keys.has("s") || keys.has("arrowdown") ?  1 : 0);
 
-    // Mobile D-pad movement (スマホ時はこれがメイン。スワイプ/ドラッグ移動は無効化)
-    const ax = isTouchDevice ? dpadVec.x : kx;
-    const ay = isTouchDevice ? dpadVec.y : ky;
+    axKey = kx;
+    ayKey = ky;
+    if (axKey !== 0 && ayKey !== 0) {
+      const inv = 1 / Math.sqrt(2);
+      axKey *= inv; ayKey *= inv;
+    }
+
+    let ax = axKey, ay = ayKey;
+    if (touchSteer.active) {
+      const dx = touchSteer.x - player.x;
+      const dy = touchSteer.y - player.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 8) {
+        ax = dx / len;
+        ay = dy / len;
+      } else {
+        ax = axKey;
+        ay = ayKey;
+      }
+    }
 
     player.x += ax * 380 * dt;
     player.y += ay * 380 * dt;
@@ -1433,20 +1556,7 @@
             spawnBurst(e.x, e.y, 5, "rgba(223,246,255,.75)", 0.9);
 
             if (e.hp <= 0) {
-              audio.sfx.enemyBoom();
-              spawnBurst(e.x, e.y, 30, enemyColorGlow(e.type), 1.1);
-              spawnRing(e.x, e.y, "rgba(223,246,255,.25)", 190);
-              shake(0.06, 5);
-
-              score += e.pts;
-              crashKills += 1;
-
-              if (e.type === 100) kill100++;
-              else if (e.type === 300) kill300++;
-              else kill500++;
-
-              enemies.splice(i, 1);
-              handleKillMilestones();
+              killEnemyAtIndex(i);
             }
           }
         }
@@ -1459,38 +1569,20 @@
             shake(0.03, 3);
 
             if (boss.hp <= 0) {
-              audio.sfx.enemyBoom();
-              spawnBurst(boss.x, boss.y, 220, "rgba(255,77,109,.95)", 1.8);
-              spawnBurst(boss.x, boss.y, 180, "rgba(255,209,102,.90)", 1.5);
-              spawnBurst(boss.x, boss.y, 160, "rgba(124,243,255,.85)", 1.2);
-              spawnRing(boss.x, boss.y, "rgba(140,0,255,.35)", 820, 7);
-              shake(0.8, 26);
-
-              crashKills += 1;
-
-              score += 5000;
-              player.hp = player.maxHp;
-              power = clamp(power + 1, 1, 100);
-              superShots = clamp(superShots + 10, 0, 999);
-
-              boss = null;
-              bossHud.classList.add("hidden");
-
-              bossLevel += 1;
-              postBossDifficulty += 1;
-
-              audio.stopBgm();
-              audio.playBgm("normal");
+              killBoss();
             }
           }
         }
 
         checkBossSpawn();
-        updateHud();
       }
     }
 
+    // 1) 弾同士の相殺
     bulletClashCheck();
+
+    // 2) 自機弾→敵/ボス 当たり判定（復活）
+    handlePlayerBulletHits();
 
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
@@ -1518,104 +1610,12 @@
         spawnBurst(it.x, it.y, 22, "rgba(52,255,179,.85)", 1.0);
         items.splice(i, 1);
 
-        updateHud();
         continue;
       }
 
       if (it.y > H + 80) items.splice(i, 1);
     }
 
-    // bullets vs enemies/boss (non-laser)
-    for (let bi = bullets.length - 1; bi >= 0; bi--) {
-      const b = bullets[bi];
-
-      if (boss) {
-        const rr = b.r + boss.r;
-        if (dist2(b.x, b.y, boss.x, boss.y) < rr * rr) {
-          if (b.type === "bomb") {
-            const radius = b.radius ?? 120;
-            bullets.splice(bi, 1);
-            spawnBombExplosion(b.x, b.y, radius, false);
-          } else {
-            boss.hp -= 1;
-            audio.sfx.enemyHit();
-            spawnBurst(boss.x + rand(-24, 24), boss.y + rand(-16, 16), 6, "rgba(255,209,102,.75)", 0.9);
-            shake(0.05, 3);
-            bullets.splice(bi, 1);
-          }
-
-          if (boss.hp <= 0) {
-            audio.sfx.enemyBoom();
-            spawnBurst(boss.x, boss.y, 220, "rgba(255,77,109,.95)", 1.8);
-            spawnBurst(boss.x, boss.y, 180, "rgba(255,209,102,.90)", 1.5);
-            spawnBurst(boss.x, boss.y, 160, "rgba(124,243,255,.85)", 1.2);
-            spawnRing(boss.x, boss.y, "rgba(140,0,255,.35)", 820, 7);
-            shake(0.8, 26);
-
-            crashKills += 1;
-
-            score += 5000;
-            player.hp = player.maxHp;
-            power = clamp(power + 1, 1, 100);
-            superShots = clamp(superShots + 10, 0, 999);
-
-            boss = null;
-            bossHud.classList.add("hidden");
-
-            bossLevel += 1;
-            postBossDifficulty += 1;
-
-            audio.stopBgm();
-            audio.playBgm("normal");
-
-            handleKillMilestones();
-            checkBossSpawn();
-          }
-
-          updateHud();
-          continue;
-        }
-      }
-
-      for (let ei = enemies.length - 1; ei >= 0; ei--) {
-        const e = enemies[ei];
-        const rr = b.r + e.r;
-        if (dist2(b.x, b.y, e.x, e.y) < rr * rr) {
-          if (b.type === "bomb") {
-            const radius = b.radius ?? 120;
-            bullets.splice(bi, 1);
-            spawnBombExplosion(b.x, b.y, radius, true);
-          } else {
-            e.hp -= b.dmg;
-            audio.sfx.enemyHit();
-            spawnBurst(e.x, e.y, 7, enemyColorGlow(e.type), 0.95);
-            bullets.splice(bi, 1);
-          }
-
-          if (e.hp <= 0) {
-            audio.sfx.enemyBoom();
-            spawnBurst(e.x, e.y, 30, enemyColorGlow(e.type), 1.1);
-            spawnRing(e.x, e.y, "rgba(223,246,255,.25)", 190);
-            shake(0.07, 5);
-
-            score += e.pts;
-            crashKills += 1;
-
-            if (e.type === 100) kill100++;
-            else if (e.type === 300) kill300++;
-            else kill500++;
-
-            enemies.splice(ei, 1);
-            handleKillMilestones();
-            checkBossSpawn();
-          }
-          updateHud();
-          break;
-        }
-      }
-    }
-
-    // enemy bullets vs player
     if (player.invuln > 0) player.invuln -= dt;
 
     if (player.invuln <= 0) {
@@ -1632,11 +1632,9 @@
 
           if (player.hp <= 0) {
             player.hp = 0;
-            updateHud();
             triggerGameOver();
             break;
           }
-          updateHud();
         }
       }
     }
@@ -1675,7 +1673,7 @@
     updateHud();
   }
 
-  // ===== Render =====
+  // ===== Render / Draw helpers =====
   function draw() {
     const rect = canvas.getBoundingClientRect();
     const sx = (rect.width * dpr) / W;
@@ -1712,9 +1710,9 @@
 
     ctx.globalAlpha = 0.10;
     ctx.fillStyle = "rgba(124,243,255,1)";
-    const t = performance.now() * 0.07;
+    const tt = performance.now() * 0.07;
     for (let i = 0; i < 14; i++) {
-      const x = (i * 42 + (t % 42));
+      const x = (i * 42 + (tt % 42));
       ctx.fillRect(x, 0, 1, H);
     }
     ctx.globalAlpha = 1;
@@ -1736,13 +1734,11 @@
     ctx.restore();
   }
 
-  // ===== Draw helpers =====
   function drawPlayerWithClones(p) {
     const cs = clonesSpec();
     if (cs.enabled) {
       const a = cs.alpha;
       const ox = 54, oy = 54;
-
       drawFighter(p.x, p.y + oy, 0.78 * a, true);
       drawFighter(p.x - ox, p.y, 0.78 * a, true);
       drawFighter(p.x + ox, p.y, 0.78 * a, true);
@@ -1857,7 +1853,6 @@
     return drawDevil(e);
   }
 
-  // UFO（薄い円なし）
   function drawUFO(e){
     ctx.save(); ctx.translate(e.x,e.y);
     ctx.fillStyle="rgba(223,246,255,.92)";
@@ -1871,10 +1866,8 @@
     ctx.restore();
   }
 
-  // Alien（薄い円なし）
   function drawAlien(e){
     ctx.save(); ctx.translate(e.x,e.y);
-
     ctx.fillStyle="rgba(52,255,179,.88)";
     ctx.beginPath(); ctx.ellipse(0,0,18,24,0,0,Math.PI*2); ctx.fill();
 
@@ -1885,7 +1878,6 @@
     ctx.strokeStyle="rgba(10,18,35,.75)";
     ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(0,10,6,0,Math.PI); ctx.stroke();
-
     ctx.restore();
   }
 
@@ -2020,10 +2012,25 @@
 
   function drawPlayerBullet(b) {
     ctx.save(); ctx.translate(b.x, b.y);
-    ctx.fillStyle = "rgba(223,246,255,.95)";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, b.r, b.r * 1.6, 0, 0, Math.PI * 2);
-    ctx.fill();
+    if (b.type === "bomb") {
+      const glow = ctx.createRadialGradient(0, 0, 6, 0, 0, 30);
+      glow.addColorStop(0, "rgba(255,209,102,.45)");
+      glow.addColorStop(0.5, "rgba(255,77,109,.25)");
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(0,0,30,0,Math.PI*2); ctx.fill();
+
+      ctx.fillStyle = "rgba(255,209,102,.92)";
+      ctx.beginPath(); ctx.arc(0,0,b.r,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle = "rgba(223,246,255,.85)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0,0,b.r+2,0,Math.PI*2); ctx.stroke();
+    } else {
+      ctx.fillStyle = "rgba(223,246,255,.95)";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, b.r, b.r * 1.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -2188,7 +2195,6 @@
   resizeCanvas();
   resetCoreState({ keepAudio: true });
 
-  // スマホでの音開始を確実にする
   window.addEventListener("pointerdown", () => {
     if (!audio) return;
     audio.ac.resume().catch(() => {});

@@ -46,7 +46,7 @@ body{
   height:100%;
   display:block;
   background: transparent;
-  touch-action:none; /* スクロール抑止 */
+  touch-action:none;
 }
 
 #hud{
@@ -217,7 +217,6 @@ body{
 
 .primary:active{ transform: translateY(1px); }
 
-/* Mobile controls */
 .mobileControls{
   position:absolute;
   left: 10px;
@@ -231,45 +230,20 @@ body{
   pointer-events:auto;
 }
 
-.dpad{
-  width: 176px;
-  height: 176px;
-  display:grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(3, 1fr);
-  gap: 8px;
-  padding: 10px;
+.touchHint{
+  flex: 1 1 auto;
+  height: 64px;
   border-radius: 18px;
-  background: rgba(10,18,35,.45);
-  border: 1px solid rgba(223,246,255,.12);
-  backdrop-filter: blur(6px);
-  touch-action:none;
-}
-
-.dpadBtn{
-  border: 1px solid rgba(223,246,255,.16);
-  background: rgba(223,246,255,.08);
-  color: rgba(223,246,255,.92);
-  border-radius: 14px;
+  border: 1px solid rgba(223,246,255,.10);
+  background: rgba(10,18,35,.25);
+  color: rgba(223,246,255,.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
   font-weight: 900;
-  font-size: 18px;
-  cursor:pointer;
+  letter-spacing: .10em;
   user-select:none;
   -webkit-user-select:none;
-  touch-action:none;
-}
-
-.dpadBtn:active,
-.dpadBtn.pressed{
-  background: rgba(124,243,255,.20);
-  border-color: rgba(124,243,255,.35);
-  box-shadow: 0 0 18px rgba(124,243,255,.18);
-}
-
-.dpadCenter{
-  border-radius: 14px;
-  border: 1px dashed rgba(223,246,255,.18);
-  background: rgba(0,0,0,.10);
 }
 
 .superBtn{
@@ -296,6 +270,6 @@ body{
 
 @media (max-width: 390px){
   #gameWrap{ width: min(94vw, 500px); }
-  .dpad{ width: 160px; height: 160px; }
   .superBtn{ min-width: 150px; height: 60px; }
+  .touchHint{ height: 60px; }
 }
